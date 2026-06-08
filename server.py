@@ -52,6 +52,7 @@ import argparse
 import asyncio
 import hashlib
 import logging
+import os
 import sys
 import threading
 import time
@@ -72,11 +73,11 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from pymongo import MongoClient
 
-from duplicate_detector.image_similarity import (
+from image import (
     PipelineConfig,
     _CV2_AVAILABLE,
 )
-from duplicate_detector.query import (
+from query import (
     Sidecar,
     compute_query_features,
     compare_features,
@@ -85,7 +86,7 @@ from duplicate_detector.query import (
     INDEX_PATH,
     EMB_CACHE_DIR,
 )
-from duplicate_detector.build import (
+from build_index import (
     Embedder,
     mongo_id_to_faiss_id,
     precompute_image_features,
@@ -659,21 +660,75 @@ async def index_delete(request: Request):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CLI
+# Configuration
+#
+# All settings can be provided as environment variables or CLI flags.
+# CLI flags take precedence over env vars.
+#
+# Environment variables:
+#   MONGO_URI       MongoDB connection URI (required)
+#   HOST            Bind host              (default: 127.0.0.1)
+#   PORT            Bind port              (default: 8000)
+#   THRESHOLD       Duplicate threshold    (default: 0.80)
+#   CANDIDATES      FAISS candidates       (default: 20)
+#   WORKERS         Uvicorn workers        (default: 1)
+#
+# Example .env / docker-compose:
+#   MONGO_URI=mongodb://localhost:27017
+#   HOST=0.0.0.0
+#   PORT=8000
+#   THRESHOLD=0.80
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _env(key: str, default: str = "") -> str:
+    return os.environ.get(key, default)
+
 
 def main():
     parser = argparse.ArgumentParser(
         description="SFH Thumbnail Duplicate Detection API Server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--uri",        required=True,              help="MongoDB connection URI")
-    parser.add_argument("--host",       default="127.0.0.1",        help="Bind host")
-    parser.add_argument("--port",       type=int, default=8000,     help="Bind port")
-    parser.add_argument("--threshold",  type=float, default=0.80,   help="Duplicate threshold")
-    parser.add_argument("--candidates", type=int,   default=20,     help="FAISS candidates per query")
-    parser.add_argument("--workers",    type=int,   default=1,      help="Uvicorn worker processes")
+    parser.add_argument(
+        "--uri",
+        default=_env("MONGO_URI"),
+        help="MongoDB connection URI [env: MONGO_URI]",
+    )
+    parser.add_argument(
+        "--host",
+        default=_env("HOST", "127.0.0.1"),
+        help="Bind host [env: HOST]",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(_env("PORT", "8000")),
+        help="Bind port [env: PORT]",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=float(_env("THRESHOLD", "0.80")),
+        help="Duplicate composite score threshold [env: THRESHOLD]",
+    )
+    parser.add_argument(
+        "--candidates",
+        type=int,
+        default=int(_env("CANDIDATES", "20")),
+        help="FAISS candidates per query [env: CANDIDATES]",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(_env("WORKERS", "1")),
+        help="Uvicorn worker processes [env: WORKERS]",
+    )
     args = parser.parse_args()
+
+    if not args.uri:
+        parser.error(
+            "MongoDB URI is required. Set --uri or MONGO_URI environment variable."
+        )
 
     state.mongo_uri  = args.uri
     state.threshold  = args.threshold
