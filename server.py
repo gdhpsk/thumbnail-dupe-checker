@@ -11,7 +11,7 @@ Endpoints:
 Request body:
   {
     "image_url": "https://...",
-    "level_id":  "59549363"
+    "level_ids": ["59549363"]
   }
 
 Response (match found, composite >= threshold):
@@ -48,6 +48,8 @@ Usage:
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv()
 import argparse
 import asyncio
 import hashlib
@@ -73,20 +75,19 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from pymongo import MongoClient
 
-from image import (
+from image_similarity import (
     PipelineConfig,
     _CV2_AVAILABLE,
 )
 from query import (
-    Sidecar,
     compute_query_features,
     compare_features,
     restricted_search,
     CANONICAL_SIZE,
     INDEX_PATH,
-    EMB_CACHE_DIR,
 )
-from build_index import (
+from build import (
+    Sidecar,
     Embedder,
     mongo_id_to_faiss_id,
     precompute_image_features,
@@ -117,14 +118,14 @@ class APIError(Exception):
         super().__init__(message)
 
 ERRORS = {
-    "MISSING_FIELDS":       (400, "Required fields missing: image_url, level_id"),
+    "MISSING_FIELDS":       (400, "Required fields missing: image_url, level_ids"),
     "INVALID_IMAGE_URL":    (400, "image_url must be a valid http/https URL"),
-    "INVALID_LEVEL_ID":     (400, "level_id must be a non-empty string"),
+    "INVALID_LEVEL_ID":     (400, "level_ids must be a non-empty string or array"),
     "IMAGE_FETCH_FAILED":   (502, "Failed to fetch image from the provided URL"),
     "IMAGE_DECODE_FAILED":  (422, "URL did not return a valid image"),
     "IMAGE_TOO_SMALL":      (422, "Image is too small to process (minimum 64x64)"),
-    "NO_SONGS_FOR_LEVEL":   (404, "No songs found for the given level_id"),
-    "NO_INDEXED_SONGS":     (404, "No indexed songs found for the given level_id — rebuild index"),
+    "NO_SONGS_FOR_LEVEL":   (404, "No songs found for the given level_ids"),
+    "NO_INDEXED_SONGS":     (404, "No indexed songs found for the given level_ids — rebuild index"),
     "INDEX_NOT_FOUND":      (503, "FAISS index not loaded — server not ready"),
     "MONGO_ERROR":          (503, "MongoDB query failed"),
     "PIPELINE_ERROR":       (500, "Internal pipeline error"),
@@ -287,7 +288,7 @@ def _check_duplicate_sync(
     indexed = [d for d in docs if str(d["_id"]) in state.sidecar]
     if not indexed:
         raise APIError("NO_INDEXED_SONGS",
-                       f"None of the {len(docs)} songs for level {level_id} are indexed", 404)
+                       f"None of the {len(docs)} songs for level IDs {level_ids} are indexed", 404)
 
     allowed_faiss_ids = [state.sidecar.faiss_id_for(str(d["_id"])) for d in indexed]
 
@@ -375,7 +376,7 @@ async def check_duplicate(request: Request):
         return api_error("MISSING_FIELDS", "Request body must be valid JSON")
 
     image_url = body.get("image_url", "").strip()
-    level_id_raw = body.get("level_id")
+    level_id_raw = body.get("level_ids")
 
     if not image_url or level_id_raw is None:
         return api_error("MISSING_FIELDS")
@@ -680,12 +681,20 @@ async def index_delete(request: Request):
 #   THRESHOLD       Duplicate threshold    (default: 0.80)
 #   CANDIDATES      FAISS candidates       (default: 20)
 #   WORKERS         Uvicorn workers        (default: 1)
+#   INDEX_DIR       FAISS index/sidecar/progress dir (default: sfh_index)
+#   EMB_CACHE_DIR   Cached .pt embeddings dir        (default: .embedding_cache)
+#
+# INDEX_DIR and EMB_CACHE_DIR are read by query.py/build.py at import time —
+# set them in .env (or the environment) before starting the server, build, or
+# query tools so all three agree on where the index and cache live.
 #
 # Example .env / docker-compose:
 #   MONGO_URI=mongodb://localhost:27017
 #   HOST=0.0.0.0
 #   PORT=8000
 #   THRESHOLD=0.80
+#   INDEX_DIR=sfh_index
+#   EMB_CACHE_DIR=.embedding_cache
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _env(key: str, default: str = "") -> str:
@@ -742,11 +751,27 @@ def main():
     state.threshold  = args.threshold
     state.candidates = args.candidates
 
+    if args.workers != 1:
+        log.warning(
+            "Ignoring --workers=%d: in-process state (FAISS index, sidecar, "
+            "write lock) is single-process only. Run multiple instances "
+            "behind a proxy if you need concurrency.", args.workers
+        )
+
+    if sys.platform == "win32":
+        # The default ProactorEventLoop on Windows waits on IOCP completion
+        # ports and only checks for signals when one of those wakes it up,
+        # so Ctrl+C (SIGINT) can sit unhandled while the server is idle.
+        # SelectorEventLoop polls with a timeout and reacts to it promptly.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Pass the app object (not "server:app") — passing an import string makes
+    # uvicorn re-import this file as a *second* module, creating a fresh
+    # AppState with a blank mongo_uri instead of the one configured above.
     uvicorn.run(
-        "server:app",
+        app,
         host=args.host,
         port=args.port,
-        workers=args.workers,
         log_level="info",
     )
 

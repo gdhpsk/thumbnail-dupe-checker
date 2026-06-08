@@ -30,12 +30,16 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import struct
 import sys
 import time
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import aiohttp
 import cv2
@@ -60,7 +64,7 @@ log = logging.getLogger(__name__)
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-INDEX_DIR       = Path("sfh_index")
+INDEX_DIR       = Path(os.environ.get("INDEX_DIR", "sfh_index"))
 INDEX_PATH      = INDEX_DIR / "index.faiss"
 SIDECAR_PATH    = INDEX_DIR / "sidecar.json"
 PROGRESS_PATH   = INDEX_DIR / "progress.json"
@@ -69,7 +73,7 @@ THUMB_CACHE_DIR = INDEX_DIR / "thumb_cache"
 MODEL_NAME    = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 EMBEDDING_DIM = 1024  # ViT-L hidden size
 
-EMB_CACHE_DIR = Path(".embedding_cache")  # shared with image_similarity.py
+EMB_CACHE_DIR = Path(os.environ.get("EMB_CACHE_DIR", ".embedding_cache"))  # shared with image_similarity.py
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-image feature precomputation

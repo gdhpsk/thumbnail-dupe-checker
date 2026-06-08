@@ -24,10 +24,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import cv2
 import faiss
@@ -39,7 +43,7 @@ from PIL import Image
 from pymongo import MongoClient
 from scipy.fft import dctn
 
-from image import (
+from image_similarity import (
     PipelineConfig,
     StageScores,
     SimilarityReport,
@@ -59,10 +63,10 @@ log = logging.getLogger(__name__)
 # Paths — must match build_index.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-INDEX_DIR     = Path("sfh_index")
+INDEX_DIR     = Path(os.environ.get("INDEX_DIR", "sfh_index"))
 INDEX_PATH    = INDEX_DIR / "index.faiss"
 SIDECAR_PATH  = INDEX_DIR / "sidecar.json"
-EMB_CACHE_DIR = Path(".embedding_cache")
+EMB_CACHE_DIR = Path(os.environ.get("EMB_CACHE_DIR", ".embedding_cache"))
 
 MODEL_NAME    = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 EMBEDDING_DIM = 1024

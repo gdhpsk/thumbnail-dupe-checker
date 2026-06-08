@@ -40,7 +40,7 @@ import torch
 import torch.nn.functional as F
 from pymongo import MongoClient
 
-from duplicate_detector.image_similarity import (
+from image_similarity import (
     PipelineConfig,
     StageScores,
     SimilarityReport,
@@ -48,7 +48,7 @@ from duplicate_detector.image_similarity import (
 
 # Reuse comparison logic from query.py
 sys.path.insert(0, str(Path(__file__).parent))
-from duplicate_detector.query import Sidecar, compare_features, _hamming_score, CANONICAL_SIZE
+from query import Sidecar, compare_features, _hamming_score, CANONICAL_SIZE
 
 logging.basicConfig(
     level=logging.INFO,

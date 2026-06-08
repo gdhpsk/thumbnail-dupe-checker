@@ -1,0 +1,6 @@
+DELETE http://localhost:6767/delete
+Content-Type: application/json
+
+{
+    "doc_id": "6a25ef7909f2503f67d57361"
+}
