@@ -22,6 +22,7 @@ Response (match found, composite >= threshold):
     "yt_video_id": "7WDcTPIKcms",
     "composite": 0.9242,
     "verdict":   "MICRO_VARIANT",
+    "verdict_description": "MICRO VARIANT — same base image; minor mutation (crop, watermark, text overlay, compression)",
     "scores": {
       "hash_ensemble":   0.9455,
       "dct_spectrum":    1.0000,
@@ -29,6 +30,18 @@ Response (match found, composite >= threshold):
       "global_semantic": 0.9244,
       "patch_spatial":   0.8894
     },
+    "grid": {
+      "matrix":   [[0.97, ...], ...],
+      "min_cell": 0.8823,
+      "variance": 0.0031
+    },
+    "alignment": {
+      "applied":      false,
+      "scale":        null,
+      "rotation_deg": null,
+      "inliers":      null
+    },
+    "stages_run": ["hash_ensemble", "dct_spectrum", "sector_grid", "align[...]", "dinov3_global", "dinov3_patch"],
     "elapsed_ms": 312.4
   }
 
@@ -351,12 +364,13 @@ def _check_duplicate_sync(
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     return {
-        "duplicate":   True,
-        "mongo_id":    str(doc["_id"]),
-        "song_name":   doc.get("songName") or doc.get("name") or "",
-        "yt_video_id": doc.get("ytVideoID") or "",
-        "composite":   round(s.composite, 4),
-        "verdict":     report.verdict_code,
+        "duplicate":           True,
+        "mongo_id":            str(doc["_id"]),
+        "song_name":           doc.get("songName") or doc.get("name") or "",
+        "yt_video_id":         doc.get("ytVideoID") or "",
+        "composite":           round(s.composite, 4),
+        "verdict":             report.verdict_code,
+        "verdict_description": report.verdict,
         "scores": {
             "hash_ensemble":   round(s.hash_ensemble,   4),
             "dct_spectrum":    round(s.dct_spectrum,    4),
@@ -364,6 +378,18 @@ def _check_duplicate_sync(
             "global_semantic": round(s.global_semantic, 4),
             "patch_spatial":   round(s.patch_spatial,   4),
         },
+        "grid": {
+            "matrix":   report.grid_matrix,
+            "min_cell": round(report.grid_min_cell, 4) if report.grid_min_cell is not None else None,
+            "variance": round(report.grid_variance,  4) if report.grid_variance  is not None else None,
+        },
+        "alignment": {
+            "applied":      s.align_applied,
+            "scale":        round(s.align_scale,        4) if s.align_scale        is not None else None,
+            "rotation_deg": round(s.align_rotation_deg, 2) if s.align_rotation_deg is not None else None,
+            "inliers":      s.align_inliers,
+        },
+        "stages_run": report.stages_run,
         "elapsed_ms": round(elapsed_ms, 1),
     }
 
