@@ -273,8 +273,9 @@ async def fetch_image(url: str) -> Image.Image:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _check_duplicate_sync(
-    img:       Image.Image,
-    level_ids: list[str],
+    img:        Image.Image,
+    level_ids:  list[str],
+    exclude_id: Optional[str] = None,
 ) -> dict:
     """
     Runs the full query pipeline synchronously.
@@ -304,7 +305,7 @@ def _check_duplicate_sync(
                        f"No songs found with levelID in {level_ids}", 404)
 
     # ── Filter to indexed docs ────────────────────────────────────────────────
-    indexed = [d for d in docs if str(d["_id"]) in state.sidecar]
+    indexed = [d for d in docs if str(d["_id"]) in state.sidecar and str(d["_id"]) != exclude_id]
     if not indexed:
         raise APIError("NO_INDEXED_SONGS",
                        f"None of the {len(docs)} songs for level IDs {level_ids} are indexed", 404)
@@ -433,6 +434,10 @@ async def check_duplicate(request: Request):
     if not level_ids:
         return api_error("INVALID_LEVEL_ID")
 
+    exclude_id = body.get("exclude_id")
+    if exclude_id is not None:
+        exclude_id = str(exclude_id).strip() or None
+
     # ── Fetch image ───────────────────────────────────────────────────────────
     try:
         img = await fetch_image(image_url)
@@ -441,7 +446,7 @@ async def check_duplicate(request: Request):
 
     # ── Run pipeline in thread pool (non-blocking) ────────────────────────────
     try:
-        result = await asyncio.to_thread(_check_duplicate_sync, img, level_ids)
+        result = await asyncio.to_thread(_check_duplicate_sync, img, level_ids, exclude_id)
     except APIError as e:
         return api_error(e.code, e.message)
     except Exception as e:
