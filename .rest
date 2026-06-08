@@ -1,6 +1,7 @@
-DELETE http://localhost:6767/delete
+POST http://localhost:6767/add
 Content-Type: application/json
 
 {
-    "doc_id": "6a25ef7909f2503f67d57361"
+    "doc_id": "6a25ef7909f2503f67d57361",
+    "image_url": "https://img.youtube.com/vi/o0Vs3FzGz3U/hqdefault.jpg"
 }

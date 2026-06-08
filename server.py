@@ -184,9 +184,15 @@ async def lifespan(app: FastAPI):
     log.info("Loading DINOv3 embedder...")
     try:
         state.embedder = Embedder()
-        # Warm up query pipeline with a dummy image
+        # Warm up query pipeline with a dummy image — reuse the embedder's
+        # already-loaded weights rather than loading a second copy.
         dummy = Image.new("RGB", (64, 64), color=(128, 128, 128))
-        compute_query_features(dummy)
+        compute_query_features(
+            dummy,
+            processor=state.embedder.processor,
+            model=state.embedder.model,
+            device=state.embedder.device,
+        )
         log.info("  DINOv3 warm-up complete")
     except Exception as e:
         log.warning(f"  DINOv3 load failed: {e}")
@@ -293,7 +299,15 @@ def _check_duplicate_sync(
     allowed_faiss_ids = [state.sidecar.faiss_id_for(str(d["_id"])) for d in indexed]
 
     # ── Feature extraction ────────────────────────────────────────────────────
-    query_features = compute_query_features(img)
+    # Reuse the long-lived embedder's weights (set up at startup) instead of
+    # loading a fresh copy of DINOv3 on every single request.
+    emb = state.embedder
+    query_features = compute_query_features(
+        img,
+        processor=emb.processor if emb else None,
+        model=emb.model if emb else None,
+        device=emb.device if emb else None,
+    )
     query_vec      = query_features["cls"].float().numpy()
 
     # ── FAISS search ──────────────────────────────────────────────────────────

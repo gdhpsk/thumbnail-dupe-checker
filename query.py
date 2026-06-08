@@ -117,11 +117,21 @@ class Sidecar:
 # Mirrors precompute_image_features() in build_index.py, plus DINOv3
 # ─────────────────────────────────────────────────────────────────────────────
 
-def compute_query_features(img: Image.Image) -> dict:
+def compute_query_features(
+    img:       Image.Image,
+    processor=None,
+    model=None,
+    device=None,
+) -> dict:
     """
     Compute all features for the query image in one pass.
     Returns the same dict structure as the cached .pt files so the
     comparison math is identical for both query and candidate sides.
+
+    Pass an already-loaded `processor`/`model`/`device` (e.g. an Embedder's)
+    to reuse weights resident in memory. Otherwise a fresh copy of MODEL_NAME
+    is loaded from scratch — fine for one-shot CLI use, but far too slow to
+    do on every request in a long-lived server.
     """
     # Normalise to canonical resolution — must match what build_index.py stores
     # so that ORB descriptors, hash bits, and DINOv3 patch grids are comparable
@@ -132,13 +142,15 @@ def compute_query_features(img: Image.Image) -> dict:
     features = {}
 
     # ── DINOv3 (CLS + patches) ───────────────────────────────────────────────
-    from transformers import AutoImageProcessor, AutoModel
-    log.info(f"Loading DINOv3: {MODEL_NAME}")
-    processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
-    model     = AutoModel.from_pretrained(MODEL_NAME, device_map="auto")
-    model.eval()
-    device = next(model.parameters()).device
-    log.info(f"  Device: {device}")
+    owns_model = model is None
+    if owns_model:
+        from transformers import AutoImageProcessor, AutoModel
+        log.info(f"Loading DINOv3: {MODEL_NAME}")
+        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+        model     = AutoModel.from_pretrained(MODEL_NAME, device_map="auto")
+        model.eval()
+        device = next(model.parameters()).device
+        log.info(f"  Device: {device}")
 
     with torch.no_grad():
         inputs  = processor(images=img, return_tensors="pt")
@@ -158,9 +170,12 @@ def compute_query_features(img: Image.Image) -> dict:
     features["patches"] = patches.cpu()   # (196, D)
     features["_device"] = device          # keep for patch math later
 
-    # Free GPU memory — done with DINOv3
-    del model, outputs
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    # Free GPU memory — only for a model we loaded ourselves; a passed-in
+    # model is owned by the caller (e.g. server's long-lived embedder).
+    del outputs
+    if owns_model:
+        del model, processor
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     # ── Perceptual hashes ────────────────────────────────────────────────────
     log.info("  Computing hashes + DCT + grid + ORB...")
