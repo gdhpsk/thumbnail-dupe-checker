@@ -253,8 +253,8 @@ async def fetch_image(url: str) -> Image.Image:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _check_duplicate_sync(
-    img:      Image.Image,
-    level_id: str,
+    img:       Image.Image,
+    level_ids: list[str],
 ) -> dict:
     """
     Runs the full query pipeline synchronously.
@@ -266,11 +266,13 @@ def _check_duplicate_sync(
         raise APIError("INDEX_NOT_FOUND", "Server index not loaded", 503)
 
     # ── MongoDB ───────────────────────────────────────────────────────────────
+    # $in on an array field matches documents where levelID contains any of
+    # the provided values — correct for both single and multi-level queries.
     try:
         client     = MongoClient(state.mongo_uri, serverSelectionTimeoutMS=5000)
         collection = client["SFH"]["songs"]
         docs       = list(collection.find(
-            {"levelID": level_id},
+            {"levelID": {"$in": level_ids}},
             {"_id": 1, "ytVideoID": 1, "songName": 1, "name": 1},
         ))
         client.close()
@@ -279,7 +281,7 @@ def _check_duplicate_sync(
 
     if not docs:
         raise APIError("NO_SONGS_FOR_LEVEL",
-                       f"No songs found with levelID={level_id}", 404)
+                       f"No songs found with levelID in {level_ids}", 404)
 
     # ── Filter to indexed docs ────────────────────────────────────────────────
     indexed = [d for d in docs if str(d["_id"]) in state.sidecar]
@@ -373,15 +375,21 @@ async def check_duplicate(request: Request):
         return api_error("MISSING_FIELDS", "Request body must be valid JSON")
 
     image_url = body.get("image_url", "").strip()
-    level_id  = str(body.get("level_id", "")).strip()
+    level_id_raw = body.get("level_id")
 
-    if not image_url or not level_id:
+    if not image_url or level_id_raw is None:
         return api_error("MISSING_FIELDS")
 
     if not image_url.startswith(("http://", "https://")):
         return api_error("INVALID_IMAGE_URL")
 
-    if not level_id:
+    # Accept either a single string or a list of strings
+    if isinstance(level_id_raw, list):
+        level_ids = [str(l).strip() for l in level_id_raw if str(l).strip()]
+    else:
+        level_ids = [str(level_id_raw).strip()]
+
+    if not level_ids:
         return api_error("INVALID_LEVEL_ID")
 
     # ── Fetch image ───────────────────────────────────────────────────────────
@@ -392,7 +400,7 @@ async def check_duplicate(request: Request):
 
     # ── Run pipeline in thread pool (non-blocking) ────────────────────────────
     try:
-        result = await asyncio.to_thread(_check_duplicate_sync, img, level_id)
+        result = await asyncio.to_thread(_check_duplicate_sync, img, level_ids)
     except APIError as e:
         return api_error(e.code, e.message)
     except Exception as e:

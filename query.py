@@ -39,7 +39,7 @@ from PIL import Image
 from pymongo import MongoClient
 from scipy.fft import dctn
 
-from duplicate_detector.image_similarity import (
+from image import (
     PipelineConfig,
     StageScores,
     SimilarityReport,
@@ -71,8 +71,8 @@ CANONICAL_SIZE = (480, 360)  # must match build_index.py — all images normalis
 
 # Must match build_index.py constants
 HASH_SIZE        = 16
-GRID_ROWS        = 4
-GRID_COLS        = 4
+GRID_ROWS        = 8
+GRID_COLS        = 8
 GRID_HASH_SIZE   = 8
 DCT_RESIZE       = (64, 64)
 ORB_MAX_FEATURES = 5000
@@ -352,6 +352,14 @@ def compare_features(q: dict, c: dict, cfg: PipelineConfig) -> SimilarityReport:
         scores.global_semantic * cfg.weight_global  +
         scores.patch_spatial   * cfg.weight_patch
     ) / total_w
+    # Grid variance penalty
+    grid_var = float(np.var(matrix))
+    composite = max(0.0, composite - grid_var * cfg.grid_variance_penalty)
+
+    # Grid veto: cap composite if sector grid mean is too low
+    if scores.sector_grid < 0.65:
+        composite = min(composite, scores.sector_grid * 1.1)
+
     scores.composite = float(composite)
 
     # ── Verdict ──────────────────────────────────────────────────────────────
@@ -442,14 +450,16 @@ def run_query(
     log.info(f"Querying MongoDB for level {level_id}...")
     client     = MongoClient(mongo_uri)
     collection = client["SFH"]["songs"]
+    # Accept single string or list — $in on array field matches any element
+    level_id_query = level_id if isinstance(level_id, list) else [level_id]
     docs       = list(collection.find(
-        {"levelID": level_id},
+        {"levelID": {"$in": level_id_query}},
         {"_id": 1, "ytVideoID": 1, "songName": 1, "name": 1},
     ))
     client.close()
 
     if not docs:
-        log.warning(f"No songs found with levelID={level_id}")
+        log.warning(f"No songs found with levelID in {level_id_query}")
         return
     log.info(f"  {len(docs)} songs for level {level_id}")
 
@@ -557,7 +567,7 @@ def main():
         description="Query SFH thumbnail index for duplicates by level ID",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--uri",  required=True        help="MongoDB connection URI")
+    parser.add_argument("--uri",        required=True,            help="MongoDB connection URI")
     parser.add_argument("--image",      required=True,            help="Path to query thumbnail")
     parser.add_argument("--level",      required=True,            help="GD level ID to search within")
     parser.add_argument("--top",        type=int,   default=5,    help="Max results to display")
