@@ -519,12 +519,35 @@ def _index_add_sync(img: Image.Image, mongo_id: str) -> dict:
 def _index_edit_sync(img: Image.Image, mongo_id: str) -> dict:
     """
     Update an existing document: remove old vector, embed new image, re-add.
-    Raises APIError if the document is not currently indexed.
+    If the document is not currently indexed, add it instead.
     """
     with state.write_lock:
         if mongo_id not in state.sidecar:
-            raise APIError("DOC_NOT_FOUND",
-                           f"{mongo_id} not found in index — use /add to insert", 404)
+            pixel_hash, cls_vec = _embed_and_store(img, mongo_id)
+            faiss_id = mongo_id_to_faiss_id(mongo_id)
+
+            state.index.add_with_ids(
+                cls_vec.reshape(1, -1).astype(np.float32),
+                np.array([faiss_id], dtype=np.int64),
+            )
+            state.sidecar.add(mongo_id, faiss_id, pixel_hash)
+
+            try:
+                save_index(state.index)
+                state.sidecar.save()
+                done = load_progress()
+                done.add(mongo_id)
+                save_progress(done)
+            except Exception as e:
+                raise APIError("INDEX_WRITE_FAILED", f"Disk write failed: {e}", 500)
+
+            log.info(f"[EDIT→ADD] {mongo_id} → faiss_id={faiss_id}")
+            return {
+                "action":    "added",
+                "mongo_id":  mongo_id,
+                "faiss_id":  faiss_id,
+                "emb_key":   pixel_hash,
+            }
 
         old_faiss_id = state.sidecar.faiss_id_for(mongo_id)
 
@@ -651,9 +674,9 @@ async def index_add(request: Request):
 async def index_edit(request: Request):
     """
     Update an existing document's embedding with a new image.
+    If doc_id isn't currently indexed, it is added instead.
     Body: {"image_url": "https://...", "doc_id": "<mongo_id>"}
-    Returns: {"action": "updated", "mongo_id": ..., "faiss_id": ..., "emb_key": ...}
-    Error if doc_id not found: DOC_NOT_FOUND (404)
+    Returns: {"action": "updated" | "added", "mongo_id": ..., "faiss_id": ..., "emb_key": ...}
     """
     try:
         body = await request.json()
